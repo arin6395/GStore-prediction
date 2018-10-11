@@ -29,13 +29,62 @@ def load_df(csv_path='all/train.csv', nrows=None):
 train_df = load_df()
 test_df = load_df("all/test.csv")
 
+
+#cleaning
 dropcols = [c for c in train_df.columns if train_df[c].nunique(dropna=True)==1]
-dropcols.remove('totals.bounces')
-dropcols.remove('totals.newVisits')
+dropcols.extend(['totals.newVisits','device.isMobile',"visitId","sessionId","geoNetwork.region","geoNetwork.networkDomain","trafficSource.adContent",'trafficSource.adwordsClickInfo.page'])
 print(dropcols)
 
 train_df.drop(dropcols,axis=1,inplace=True,errors='ignore')
 test_df.drop(dropcols,axis=1,inplace=True,errors='ignore')
 
-train_df.to_csv("all/proccessed_train.csv")
-test_df.to_csv("all/proccessed_test.csv")
+
+test_df['totals.pageviews'].fillna(0,inplace=True)
+test_df['totals.hits'].fillna(0,inplace=True)
+test_df[['totals.hits','totals.pageviews']] = test_df[['totals.hits','totals.pageviews']].astype(np.int)
+
+train_df['totals.pageviews'].fillna(0,inplace=True)
+train_df['totals.hits'].fillna(0,inplace=True)
+train_df[['totals.hits','totals.pageviews']] = train_df[['totals.hits','totals.pageviews']].astype(np.int)
+
+cols = ['trafficSource.adwordsClickInfo.adNetworkType','trafficSource.adwordsClickInfo.gclId','trafficSource.adwordsClickInfo.slot']
+train_df[cols] = train_df[cols].fillna("No_Ad")
+train_df['trafficSource.referralPath'].fillna("No_Path",inplace=True)
+train_df['trafficSource.keyword'].fillna("(not provided)",inplace=True)
+train_df['trafficSource.medium']=train_df['trafficSource.medium'].replace(to_replace=["(None)"],value="(not set)",inplace=True)
+
+test_df[cols] = test_df[cols].fillna("No_Ad")
+test_df['trafficSource.referralPath'].fillna("No_Path",inplace=True)
+test_df['trafficSource.keyword'].fillna("(not provided)",inplace=True)
+test_df['trafficSource.medium']=test_df['trafficSource.medium'].replace(to_replace=["(None)"],value="(not set)",inplace=True)
+
+
+#adding time attributes
+train_df['month'] = train_df.date.dt.month
+train_df['dayofmonth'] = train_df.date.dt.day
+train_df['dayofweek'] = train_df.date.dt.dayofweek
+train_df['dayofyear'] = train_df.date.dt.dayofyear
+train_df['weekofyear'] = train_df.date.dt.weekofyear
+train_df['is_month_start'] = (train_df.date.dt.is_month_start).astype(int)
+train_df['is_month_end'] = (train_df.date.dt.is_month_end).astype(int)
+train_df['quarter'] = train_df.date.dt.quarter
+
+test_df['month'] = test_df.date.dt.month
+test_df['dayofmonth'] = test_df.date.dt.day
+test_df['dayofweek'] = test_df.date.dt.dayofweek
+test_df['dayofyear'] = test_df.date.dt.dayofyear
+test_df['weekofyear'] = test_df.date.dt.weekofyear
+test_df['is_month_start'] = (test_df.date.dt.is_month_start).astype(int)
+test_df['is_month_end'] = (test_df.date.dt.is_month_end).astype(int)
+test_df['quarter'] = test_df.date.dt.quarter
+
+
+#adding custom KPIs
+train_df['hitsPerPage']=round(train_df['totals.hits']/train_df['totals.pageviews'],2)
+test_df['hitsPerPage']=round(test_df['totals.hits']/test_df['totals.pageviews'],2)
+
+train_df["totals.transactionRevenue"].fillna(0,inplace=True)
+train_df["totals.transactionRevenue"] = train_df["totals.transactionRevenue"].astype(np.float)
+
+train_df.to_csv("all/proccessed_train2.csv")
+test_df.to_csv("all/proccessed_test2.csv")
