@@ -1,0 +1,134 @@
+import pandas as pd
+import numpy as np
+import time
+import gc
+import json
+import os
+from datetime import datetime
+from pandas.io.json import json_normalize
+import matplotlib.pyplot as plt
+from sklearn import linear_model
+from sklearn import metrics
+import seaborn as sns
+import xgboost as xgb
+import lightgbm as lgb
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import Imputer, LabelEncoder
+from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error
+sns.set_style("dark")
+
+train_df = pd.read_csv("all/proccessed_train2.csv")
+test_df=pd.read_csv("all/proccessed_test2.csv")
+#test_df["totals.transactionRevenue"]=0
+
+print(train_df.shape)
+print(test_df.shape)
+
+cat_many_label_cols = ["channelGrouping", "device.browser", "device.operatingSystem", 
+            "geoNetwork.city", "geoNetwork.continent", 
+            "geoNetwork.country", "geoNetwork.metro",
+            "geoNetwork.subContinent","trafficSource.adwordsClickInfo.gclId", 
+            "trafficSource.campaign",
+            "trafficSource.keyword", "trafficSource.medium", 
+            "trafficSource.referralPath", "trafficSource.source"]
+
+cat_few_label_cols = ["device.deviceCategory","trafficSource.adwordsClickInfo.adNetworkType",
+                     "trafficSource.adwordsClickInfo.slot"]
+
+
+for col in cat_many_label_cols:
+    print(col)
+    lbl1 = LabelEncoder()
+    lbl1.fit(list(train_df[col].values.astype('str')))
+    train_df[col] = lbl1.transform(list(train_df[col].values.astype('str')))
+    lbl2 = LabelEncoder()
+    lbl2.fit(list(test_df[col].values.astype('str')))
+    test_df[col] = lbl2.transform(list(test_df[col].values.astype('str')))
+    
+train_df = pd.get_dummies(train_df,columns=cat_few_label_cols)
+test_df = pd.get_dummies(test_df,columns=cat_few_label_cols)
+
+train_df['hitsPerPage'].replace(to_replace=[float('inf')],value=0,inplace=True)
+test_df['hitsPerPage'].replace(to_replace=[float('inf')],value=0,inplace=True)
+
+
+part=int(len(train_df) * 0.9)
+val_df = train_df[part+1:]
+dropcols = ['fullVisitorId']
+train_x = train_df.drop(dropcols,axis=1)
+test_x = test_df.drop(dropcols,axis=1)
+
+
+dev_x = train_x[:part]
+val_x = train_x[part+1:]
+dev_y = np.log1p(dev_x["totals.transactionRevenue"].values)
+val_y = np.log1p(val_x["totals.transactionRevenue"].values)
+dev_x.drop(["totals.transactionRevenue"],axis=1,inplace=True)
+val_x.drop(["totals.transactionRevenue"],axis=1,inplace=True)
+
+
+lgb_params = {
+        "objective" : "regression",
+        "metric" : "rmse", 
+        "num_leaves" : 1024,
+        'max_depth': 16,  
+        'max_bin': 255,
+        "min_child_samples" : 100,
+        "learning_rate" : 0.005,
+        'verbose': 0,
+        "bagging_fraction" : 0.7,
+        "feature_fraction" : 0.7,
+        "bagging_frequency" : 5,
+        "bagging_seed" : 2018
+    }
+
+dtrain = lgb.Dataset(dev_x, label=dev_y)
+dvalid = lgb.Dataset(val_x, label=val_y)
+
+evals_results = {}
+print("Training the model...")
+
+start = datetime.now()
+lgb_model = lgb.train(lgb_params, 
+                 dtrain, 
+                 valid_sets=[dtrain, dvalid], 
+                 valid_names=['train','valid'], 
+                 evals_result=evals_results, 
+                 num_boost_round=1000,
+                 early_stopping_rounds=90,
+                 verbose_eval=50, 
+                 feval=None)
+print("Total time taken : ", datetime.now()-start)
+
+pred_test_lgb = lgb_model.predict(test_x, num_iteration=lgb_model.best_iteration)
+pred_val_lgb = lgb_model.predict(val_x, num_iteration=lgb_model.best_iteration)
+
+
+
+pred_val_lgb[pred_val_lgb<0] = 0
+val_pred_df = pd.DataFrame({"fullVisitorId":val_df["fullVisitorId"].values})
+val_pred_df["transactionRevenue"] = val_df["totals.transactionRevenue"].values
+val_pred_df["PredictedRevenue"] = np.expm1(pred_val_lgb)
+val_pred_df = val_pred_df.groupby("fullVisitorId")["transactionRevenue", "PredictedRevenue"].sum().reset_index()
+print(np.sqrt(metrics.mean_squared_error(np.log1p(val_pred_df["transactionRevenue"].values), np.log1p(val_pred_df["PredictedRevenue"].values))))
+
+
+
+fold_importance_df = pd.DataFrame()
+fold_importance_df["feature"] = val_x.columns
+fold_importance_df["importance"] = lgb_model.feature_importance()
+plt.figure(figsize=(18,20))
+sns.barplot(x='importance',y='feature',data=fold_importance_df.sort_values(by="importance", ascending=False))
+plt.show()
+
+train_id = train_df["fullVisitorId"].values
+test_id = test_df["fullVisitorId"].values
+sub_df = pd.DataFrame({"fullVisitorId":test_id})
+#sub_df["fullVisitorId"]=sub_df["fullVisitorId"].astype(int)
+pred_test_lgb[pred_test_lgb<0] = 0
+sub_df["PredictedLogRevenue"] = np.expm1(pred_test_lgb)
+sub_df = sub_df.groupby(["fullVisitorId"],sort=False)["PredictedLogRevenue"].sum().reset_index()
+sub_df.columns = ["fullVisitorId", "PredictedLogRevenue"]
+#sub_df2["PredictedLogRevenue"] = np.log1p(sub_df2["PredictedLogRevenue"])
+sub_df.to_csv("baseline_lgb.csv", index=False)
+print(sub_df.describe())

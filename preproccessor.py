@@ -6,8 +6,8 @@ import json
 import os
 from datetime import datetime
 from pandas.io.json import json_normalize
-#import matplotlib.pyplot as plt
-#from sklearn import linear_model
+import matplotlib.pyplot as plt
+from sklearn import linear_model
 
 #json breaking
 def load_df(csv_path='all/train.csv', nrows=None):
@@ -51,12 +51,12 @@ cols = ['trafficSource.adwordsClickInfo.adNetworkType','trafficSource.adwordsCli
 train_df[cols] = train_df[cols].fillna("No_Ad")
 train_df['trafficSource.referralPath'].fillna("No_Path",inplace=True)
 train_df['trafficSource.keyword'].fillna("(not provided)",inplace=True)
-train_df['trafficSource.medium']=train_df['trafficSource.medium'].replace(to_replace=["(None)"],value="(not set)",inplace=True)
+train_df['trafficSource.medium'].replace(to_replace=["(None)"],value="(not set)",inplace=True)
 
 test_df[cols] = test_df[cols].fillna("No_Ad")
 test_df['trafficSource.referralPath'].fillna("No_Path",inplace=True)
 test_df['trafficSource.keyword'].fillna("(not provided)",inplace=True)
-test_df['trafficSource.medium']=test_df['trafficSource.medium'].replace(to_replace=["(None)"],value="(not set)",inplace=True)
+test_df['trafficSource.medium'].replace(to_replace=["(None)"],value="(not set)",inplace=True)
 
 
 #adding time attributes
@@ -85,6 +85,10 @@ test_df['hitsPerPage']=round(test_df['totals.hits']/test_df['totals.pageviews'],
 
 train_df["totals.transactionRevenue"].fillna(0,inplace=True)
 train_df["totals.transactionRevenue"] = train_df["totals.transactionRevenue"].astype(np.float)
+
+dropcols = ['date']
+train_df.drop(dropcols,axis=1,inplace=True,errors='ignore')
+test_df.drop(dropcols,axis=1,inplace=True,errors='ignore')
 
 train_df.to_csv("all/proccessed_train2.csv")
 test_df.to_csv("all/proccessed_test2.csv")
