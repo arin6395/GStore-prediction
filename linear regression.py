@@ -17,8 +17,8 @@ from sklearn.preprocessing import Imputer, LabelEncoder
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error
 sns.set_style("dark")
 
-train_df = pd.read_csv("all/proccessed_train2.csv")
-test_df=pd.read_csv("all/proccessed_test2.csv")
+train_df = pd.read_csv("all/proccessed_train2.csv",parse_dates=['date'])
+test_df=pd.read_csv("all/proccessed_test2.csv",parse_dates=['date'])
 #test_df["totals.transactionRevenue"]=0
 
 print(train_df.shape)
@@ -48,37 +48,41 @@ for col in cat_many_label_cols:
 train_df = pd.get_dummies(train_df,columns=cat_few_label_cols)
 test_df = pd.get_dummies(test_df,columns=cat_few_label_cols)
 
-train_df['hitsPerPage'].replace(to_replace=[float('inf')],value=0,inplace=True)
-test_df['hitsPerPage'].replace(to_replace=[float('inf')],value=0,inplace=True)
+train_df['totals.transactionRevenue']=train_df['totals.transactionRevenue'].astype(float)
 
+part=int(len(train_df) * 0.85)
 
-part=int(len(train_df) * 0.9)
-val_df = train_df[part+1:]
+val_df = train_df[train_df['date']>datetime(2017,5,1)]
 dropcols = ['fullVisitorId']
 train_x = train_df.drop(dropcols,axis=1)
 test_x = test_df.drop(dropcols,axis=1)
 
 
-dev_x = train_x[:part]
-val_x = train_x[part+1:]
-dev_y = np.log1p(dev_x["totals.transactionRevenue"].values)
-val_y = np.log1p(val_x["totals.transactionRevenue"].values)
-dev_x.drop(["totals.transactionRevenue"],axis=1,inplace=True)
-val_x.drop(["totals.transactionRevenue"],axis=1,inplace=True)
+dev_x = train_x[train_df['date']<=datetime(2017,5,1)]
+val_x = train_x[train_df['date']>datetime(2017,5,1)]
+dev_y = np.log1p(dev_x["totals.transactionRevenue"].values/100000000)
+val_y = np.log1p(val_x["totals.transactionRevenue"].values/100000000)
+dev_x.drop(["totals.transactionRevenue",'date'],axis=1,inplace=True)
+val_x.drop(["totals.transactionRevenue",'date'],axis=1,inplace=True)
+test_x.drop(["date"],axis=1,inplace=True)
+
+print(train_df.shape)
+print(val_df.shape)
+print(test_df.shape)
+
 
 
 lgb_params = {
         "objective" : "regression",
         "metric" : "rmse", 
-        "num_leaves" : 1024,
+        "num_leaves" : 512,
         'max_depth': 16,  
         'max_bin': 255,
-        "min_child_samples" : 100,
-        "learning_rate" : 0.005,
+        "min_child_samples" : 50,
+        "learning_rate" : 0.0025,
         'verbose': 0,
         "bagging_fraction" : 0.7,
         "feature_fraction" : 0.7,
-        "bagging_frequency" : 5,
         "bagging_seed" : 2018
     }
 
@@ -95,7 +99,7 @@ lgb_model = lgb.train(lgb_params,
                  valid_names=['train','valid'], 
                  evals_result=evals_results, 
                  num_boost_round=1000,
-                 early_stopping_rounds=90,
+                 early_stopping_rounds=100,
                  verbose_eval=50, 
                  feval=None)
 print("Total time taken : ", datetime.now()-start)
@@ -108,9 +112,9 @@ pred_val_lgb = lgb_model.predict(val_x, num_iteration=lgb_model.best_iteration)
 pred_val_lgb[pred_val_lgb<0] = 0
 val_pred_df = pd.DataFrame({"fullVisitorId":val_df["fullVisitorId"].values})
 val_pred_df["transactionRevenue"] = val_df["totals.transactionRevenue"].values
-val_pred_df["PredictedRevenue"] = np.expm1(pred_val_lgb)
+val_pred_df["PredictedRevenue"] = pred_val_lgb
 val_pred_df = val_pred_df.groupby("fullVisitorId")["transactionRevenue", "PredictedRevenue"].sum().reset_index()
-print(np.sqrt(metrics.mean_squared_error(np.log1p(val_pred_df["transactionRevenue"].values), np.log1p(val_pred_df["PredictedRevenue"].values))))
+print(np.sqrt(metrics.mean_squared_error(val_pred_df["transactionRevenue"].values, val_pred_df["PredictedRevenue"].values)))
 
 
 
@@ -124,11 +128,11 @@ plt.show()
 train_id = train_df["fullVisitorId"].values
 test_id = test_df["fullVisitorId"].values
 sub_df = pd.DataFrame({"fullVisitorId":test_id})
-#sub_df["fullVisitorId"]=sub_df["fullVisitorId"].astype(int)
+sub_df["fullVisitorId"]=sub_df["fullVisitorId"].astype('float')
 pred_test_lgb[pred_test_lgb<0] = 0
 sub_df["PredictedLogRevenue"] = np.expm1(pred_test_lgb)
-sub_df = sub_df.groupby(["fullVisitorId"],sort=False)["PredictedLogRevenue"].sum().reset_index()
+sub_df = sub_df.groupby(["fullVisitorId"])["PredictedLogRevenue"].sum().reset_index()
 sub_df.columns = ["fullVisitorId", "PredictedLogRevenue"]
-#sub_df2["PredictedLogRevenue"] = np.log1p(sub_df2["PredictedLogRevenue"])
+sub_df["PredictedLogRevenue"] = np.log1p(sub_df["PredictedLogRevenue"])
 sub_df.to_csv("baseline_lgb.csv", index=False)
 print(sub_df.describe())
